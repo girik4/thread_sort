@@ -30,11 +30,12 @@ void merge(struct record_key *array, int left, int mid, int right)
 
     struct record_key *left_side = malloc(lsize * sizeof(struct record_key));
     struct record_key *right_side = malloc(rsize * sizeof(struct record_key));
+    
     for (int i = 0; i < lsize; i++)
     {
         memcpy(&(left_side[i]), &(array[left + i]), 100);
     }
-    for (int i = mid; i < rsize; i++)
+    for (int i = 0; i < rsize; i++)
     {
         memcpy(&(right_side[i]), &(array[mid + i + 1]), 100);
     }
@@ -127,7 +128,7 @@ void mergeAll(struct record_key *array, int numPartitions, int partition)
     for (int i = 0; i < numPartitions; i += 2)
     {
         int left = i * num_entries * partition;
-        int right = ((i + 2) * num_entries * partition);
+        int right = ((i + 2) * num_entries * partition) - 1;
         int mid = left + (num_entries * partition) - 1;
 
         // base case
@@ -179,8 +180,10 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    char *input_file = argv[1];
-    char *output_file = argv[2];
+    char *input_file;
+    char *output_file;
+    input_file = argv[1];
+    output_file = argv[2];
     int numThreads = atoi(argv[3]);
 
     // trying to open input file
@@ -188,7 +191,7 @@ int main(int argc, char **argv)
     if (fp == NULL)
     {
         perror("Input file error");
-        return -1;
+        exit(0);
     }
 
     // check for valid number of threads
@@ -210,13 +213,14 @@ int main(int argc, char **argv)
     }
 
     // grab the number of records
-    num_records = size / RECORD;
+    int total_records = size / RECORD;
+    num_records = total_records;
 
     // fill in our array to be sorted
-    array = malloc(num_records * sizeof(struct record_key));
+    array = malloc(total_records * sizeof(struct record_key));
 
     char *data = mmap(0, size, PROT_READ, MAP_PRIVATE, fd, 0);
-    for (int i = 0; i < num_records; i++)
+    for (int i = 0; i < total_records; i++)
     {
         // putting memory map data (every 100 bytes) into record_key
         struct record_key *rec = (struct record_key *)(data + (i * 100));
@@ -226,13 +230,13 @@ int main(int argc, char **argv)
 
     num_processes = get_nprocs();
     // create the thread pool
-    remain_work = num_records % num_processes;
-    pthread_t thread[numThreads];
+    remain_work = total_records % num_processes;
+    pthread_t thread[num_processes];
 
     // start the psort
-    for (long i = 0; i < numThreads; i++)
+    for (long i = 0; i < num_processes; i++)
     {
-        int thread_status = pthread_create(&thread[i], NULL, thread_helper, (void *)i);
+        int thread_status = pthread_create(&thread[i], NULL, thread_helper, (void*) i);
         if (thread_status != 0)
         {
             fprintf(stderr, "An error has occurred\n");
@@ -248,17 +252,18 @@ int main(int argc, char **argv)
 
     int fptr;
     fptr = open(output_file, O_WRONLY, O_APPEND);
+    printf("%d\n", fptr);
     if (fptr == -1)
     {
-        fprintf(stderr, "An error has occurred\n");
+        fprintf(stderr, "An error has occurred 1\n");
         exit(0);
     }
-    for (int i = 0; i < num_records; i++)
+    for (int i = 0; i < total_records; i++)
     {
         int rc = write(fptr, &(array[i]), sizeof(struct record_key));
         if (rc != 100)
         {
-            fprintf(stderr, "An error has occurred\n");
+            fprintf(stderr, "An error has occurred 2\n");
             exit(0);
         }
     }
