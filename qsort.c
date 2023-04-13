@@ -20,107 +20,19 @@ struct record {
 };
 
 typedef struct {
-    struct record_key *data;
+    struct record *data;
     int start;
     int end;
 } ThreadArgs;
 
-void merge(struct record *data, int start, int mid, int end)
-{
-    int left_size = mid - start + 1;
-    int right_size = end - mid;
-
-    struct record *left = malloc(left_size * sizeof(struct record));
-    struct record *right = malloc(right_size * sizeof(struct record));
-
-    for (int i = 0; i < left_size; i++)
-    {
-        left[i] = data[start + i];
-    }
-
-    for (int i = 0; i < right_size; i++)
-    {
-        right[i] = data[mid + 1 + i];
-    }
-
-    int i = 0, j = 0, k = start;
-    while (i < left_size && j < right_size)
-    {
-        if (*(int *)left[i].key <= *(int *)right[j].key)
-        {
-            data[k++] = left[i++];
-        }
-        else
-        {
-            data[k++] = right[j++];
-        }
-    }
-
-    while (i < left_size)
-    {
-        data[k++] = left[i++];
-    }
-
-    while (j < right_size)
-    {
-        data[k++] = right[j++];
-    }
-
-    free(left);
-    free(right);
+int compare_keys(const void *a, const void *b) {
+    return (*(int*)a - *(int*)b);
 }
 
-struct record *merge_sort(struct record *arr, int start, int end)
-{
-    if (start < end)
-    {
-        int mid = start + (end - start) / 2;
-        merge_sort(arr, start, mid);
-        merge_sort(arr, mid + 1, end);
-        merge(arr, start, mid, end);
-    }
-    return arr;
-}
-
-void *thread_merge_sort(void *arg)
-{
+void *thread_qsort(void *arg) {
     ThreadArgs *thread_args = (ThreadArgs *)arg;
-    merge_sort(thread_args->data, thread_args->start, thread_args->end);
+    qsort(thread_args->data + thread_args->start, thread_args->end - thread_args->start, sizeof(struct record), compare_keys);
     return NULL;
-}
-
-void merge_sections(struct record *data, int num_threads, ThreadArgs *thread_args)
-{
-    if (num_threads <= 1)
-        return;
-
-    int num_active_threads = num_threads;
-
-    while (num_active_threads > 1)
-    {
-        int num_pairs = (num_active_threads + 1) / 2;
-
-        for (int i = 0; i < num_pairs; i++)
-        {
-            int first = i * 2;
-            int second = i * 2 + 1;
-
-            if (second < num_active_threads)
-            {
-                int start = thread_args[first].start;
-                int mid = thread_args[first].end;
-                int end = thread_args[second].end;
-                merge(data, start, mid, end);
-                thread_args[i] = (ThreadArgs){.data = data, .start = start, .end = end};
-            }
-            else
-            {
-                thread_args[i] = thread_args[first];
-            }
-        }
-
-        num_active_threads = num_pairs;
-    }
 }
 
 int main(int argc, char **argv) {
@@ -179,14 +91,12 @@ int main(int argc, char **argv) {
         thread_args[i].data = array;
         thread_args[i].start = i * records_per_thread;
         thread_args[i].end = (i == num_threads - 1) ? num_records : (i + 1) * records_per_thread;
-        pthread_create(&threads[i], NULL, thread_merge_sort, &thread_args[i]);
+        pthread_create(&threads[i], NULL, thread_qsort, &thread_args[i]);
     }
 
     for (int i = 0; i < num_threads; i++) {
         pthread_join(threads[i], NULL);
     }
-
-    merge_sections(array, num_threads, thread_args);
 
     struct record *sorted_records = malloc(num_records * sizeof(struct record));
     int *indices = malloc(num_threads * sizeof(int));
@@ -198,7 +108,7 @@ int main(int argc, char **argv) {
         int min_idx = -1;
         for (int j = 0; j < num_threads; j++) {
             if (indices[j] < thread_args[j].end) {
-                if (min_idx == -1 || cmp_records(&array[indices[j]], &array[indices[min_idx]]) < 0) {
+                if (min_idx == -1 || compare_keys(&array[indices[j]], &array[indices[min_idx]]) < 0) {
                     min_idx = j;
                 }
             }
@@ -214,7 +124,7 @@ int main(int argc, char **argv) {
         exit(0);
     }
     for (int i = 0; i < total_records; i++) {
-        fprintf(fptr, "%s%s", array[i].key, array[i].record);
+        fprintf(fptr, "%s%s", sorted_records[i].key, sorted_records[i].record);
     }
     fsync(fileno(fptr));
     fclose(fptr);
