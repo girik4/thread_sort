@@ -2,285 +2,152 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <sys/stat.h>
-#include <sys/mman.h>
 #include <string.h>
 #include <sys/sysinfo.h>
-#include <fcntl.h>
 #include <unistd.h>
+#include <sys/mman.h>
+#include <fcntl.h>
 
 #define KEY_S 4
 #define RECORD_S 96
 #define RECORD 100
 
-int num_records; // number of record
-struct record_key *array;
-int remain_work;
-int num_processes;
+int num_records;
+struct record *array;
+int num_threads;
 
-struct record_key
-{
+struct record {
     char key[KEY_S+1];
     char record[RECORD_S+1];
 };
 
-void merge(struct record_key *array, int left, int mid, int right)
-{
-    int lsize = mid - left + 1;
-    int rsize = right - mid;
+typedef struct {
+    struct record *array;
+    int first;
+    int last;
+} ThreadArgs;
 
-    struct record_key *left_side = malloc(lsize * sizeof(struct record_key));
-    struct record_key *right_side = malloc(rsize * sizeof(struct record_key));
-    
-    for (int i = 0; i < lsize; i++)
-    {
-        memcpy(&(left_side[i]), &(array[left + i]), 100);
-    }
-    for (int i = 0; i < rsize; i++)
-    {
-        memcpy(&(right_side[i]), &(array[mid + i + 1]), 100);
-    }
-
-    // merge two half
-    int i = 0;
-    int j = 0;
-    int k = 0;
-    while (i < lsize && j < rsize)
-    {
-        // printf("i %d ; j %d\n", i,j);
-        if (left_side[i].key < right_side[j].key)
-        {
-            array[left + k] = left_side[i];
-            i++;
-        }
-        else
-        {
-            array[left + k] = right_side[j];
-            j++;
-        }
-        k++;
-    }
-
-    // add remaining elements if possible/needed
-    while (i < lsize)
-    {
-        array[left + k] = left_side[i];
-        i++;
-        k++;
-    }
-    while (j < rsize)
-    {
-        array[left + k] = right_side[j];
-        j++;
-        k++;
-    }
-
-    free(left_side);
-    free(right_side);
+int compare_keys(const void *a, const void *b) {
+    return (*(int*)a - *(int*)b);
 }
 
-void mergeSort(struct record_key *array, int left, int right)
-{
-    int mid = left + (right - left) / 2;
-    if (left < right)
-    {
-        mergeSort(array, left, mid);
-        mergeSort(array, mid + 1, right);
-        merge(array, left, mid, right);
-    }
-}
-
-void *thread_helper(void *numThreads)
-{
-    int numEntries = (num_records / num_processes);
-    int threads = (long)numThreads;
-
-    int left = threads * numEntries;
-    int right = (threads + 1) * numEntries - 1;
-
-    if (threads == num_processes - 1)
-    {
-        right += remain_work;
-    }
-    int mid = left + (right - left) / 2;
-    // mergesort on 1st half and second half then combine everything together
-    if (left < right)
-    {
-        mergeSort(array, left, mid);
-        mergeSort(array, mid + 1, right);
-        merge(array, left, mid, right);
-    }
+void *thread_qsort(void *arg) {
+    ThreadArgs *thread_args = (ThreadArgs *)arg;
+    qsort(thread_args->array + thread_args->first, thread_args->last - thread_args->first, sizeof(struct record), compare_keys);
     return NULL;
 }
 
-void *thread2_helper(void *args)
-{
-    int *args2 = (int*)args;
-    merge(array, args2[0], args2[1], args2[2]);
-    free(args);
-    return NULL;
-}
-
-
-void mergeAll(struct record_key *array, int numPartitions, int partition)
-{
-    int num_entries = (num_records / num_processes);
-    pthread_t threads[numPartitions / 2];
-    for (int i = 0; i < numPartitions; i += 2)
-    {
-        int left = i * num_entries * partition;
-        int right = ((i + 2) * num_entries * partition) - 1;
-        int mid = left + (num_entries * partition) - 1;
-
-        // base case
-        if (right >= num_records)
-        {
-            right = num_records - 1;
-        }
-        if (numPartitions <= 2)
-        {
-            merge(array, left, mid, right);
-        }
-        else
-        {
-            // thread the merge
-            int *args = (int *)malloc(3 * sizeof(int));
-            args[0] = left;
-            args[1] = mid;
-            args[2] = right;
-            int thread_status = pthread_create(&threads[(int)i / 2], NULL, thread2_helper, (void *)args);
-            if (thread_status != 0)
-            {
-                fprintf(stderr, "error\n");
-                exit(0);
-            }
-        }
-    }
-
-    if (numPartitions > 1)
-    {
-        for (int i = 0; i < numPartitions / 2; i++)
-        {
-            pthread_join(threads[i], NULL);
-        }
-    }
-    // recursively merge again
-    int remainingPartitions = numPartitions / 2;
-    if (remainingPartitions >= 1)
-    {
-        mergeAll(array, remainingPartitions, partition * 2);
-    }
-}
-
-int main(int argc, char **argv)
-{
-    // error: invalid number of args
-    if (argc != 4)
-    {
+int main(int argc, char **argv) {
+    if (argc != 4) {
         printf("Usage: %s input output numThreads\n", argv[0]);
         return 1;
     }
 
-    char *input_file;
-    char *output_file;
-    input_file = argv[1];
-    output_file = argv[2];
-    int numThreads = atoi(argv[3]);
+    char *input_file = argv[1];
+    char *output_file = argv[2]; O_RDONLY
+    num_threads = atoi(argv[3]);
 
-    // trying to open input file
-    FILE *fp = fopen(input_file, "r");
-    if (fp == NULL)
-    {
+    int fd = open(input_file, O_RDONLY);
+    if (fp == NULL) {
         perror("Input file error");
         exit(0);
     }
 
-    // check for valid number of threads
-    if (numThreads < 1 || numThreads > get_nprocs())
-    {
-        fprintf(stderr, "An error has occurred\n");
-    }
-
-    //int fd = fileno(fp);
-
-    struct stat file_s;
-    stat(input_file, &file_s);
-    
-    // checking size if input file
-    int size = (int)file_s.st_size;
-    if (size <= 0 || size % 100 != 0)
-    {
-        fprintf(stderr, "An error has occurred\n");
+    if (num_threads < 1 || num_threads > get_nprocs()) {
+        fprintf(stderr, "Invalid number of threads\n");
         exit(0);
     }
 
-    // grab the number of records
+    struct stat file_s;
+    stat(input_file, &file_s);
+
+    int size = (int)file_s.st_size;
+    if (size <= 0 || size % RECORD != 0) {
+        fprintf(stderr, "Invalid input file size\n");
+        exit(0);
+    }
+
     int total_records = size / RECORD;
     num_records = total_records;
 
-    // fill in our array to be sorted
-    array = malloc(total_records * sizeof(struct record_key));
+    array = malloc(total_records * sizeof(struct record));
 
-
-    for (int i = 0; i < total_records; i++)
-    {
-        if (fread(array[i].key, sizeof(char), KEY_S, fp) != KEY_S)
-        {
+    for (int i = 0; i < total_records; i++) {
+        if (fread(array[i].key, sizeof(char), KEY_S, fp) != KEY_S) {
             exit(0);
         }
         array[i].key[KEY_S] = '\0';
-        if (fread(array[i].record, sizeof(char), RECORD_S, fp) != RECORD_S)
-        {
+        if (fread(array[i].record, sizeof(char), RECORD_S, fp) != RECORD_S) {
             exit(0);
         }
         array[i].record[RECORD_S] = '\0';
     }
+    fclose(fp);
 
-    
+    pthread_t threads[num_threads];
+    ThreadArgs thread_args[num_threads];
+    int records_per_thread = num_records / num_threads;
 
-
-
-    num_processes = get_nprocs();
-    // create the thread pool
-    remain_work = total_records % num_processes;
-    pthread_t thread[num_processes];
-
-    // start the psort
-    for (long i = 0; i < num_processes; i++)
-    {
-        int thread_status = pthread_create(&thread[i], NULL, thread_helper, (void*) i);
-        if (thread_status != 0)
+    for (int i = 0; i < num_threads; i++) {
+        thread_args[i].array = array;
+        thread_args[i].first = i * records_per_thread;
+        if (i == num_threads-1)
         {
-            fprintf(stderr, "An error has occurred\n");
-            exit(0);
+            thread_args[i].last = num_records;
         }
-    }
-    
-    for (int i = 0; i < num_processes; i++)
-    {
-        pthread_join(thread[i], NULL);
+        else{
+            thread_args[i].last = (i+1) * records_per_thread;
+        }
+        pthread_create(&threads[i], NULL, thread_qsort, &thread_args[i]);
     }
 
-    mergeAll(array, num_processes, 1);
+    for (int i = 0; i < num_threads; i++) {
+        pthread_join(threads[i], NULL);
+    }
 
+    struct record *sorted_records = malloc(num_records * sizeof(struct record));
+
+    for (int i = 0, min_idx; i < num_records; i++) {
+        min_idx = -1;
+        for (int j = 0; j < num_threads; j++) {
+            if (thread_args[j].first < thread_args[j].last) {
+                if (min_idx == -1 || compare_keys(&array[thread_args[j].first], &array[thread_args[min_idx].first]) < 0) {
+                    min_idx = j;
+                }
+            }
+        }
+        sorted_records[i] = array[thread_args[min_idx].first++];
+    }
+
+    // struct record *sorted_records = malloc(num_records * sizeof(struct record));
+    // int *indices = malloc(num_threads * sizeof(int));
+    // for (int i = 0; i < num_threads; i++) {
+    //     indices[i] = thread_args[i].start;
+    // }
+
+    // for (int i = 0; i < num_records; i++) {
+    //     int min_idx = -1;
+    //     for (int j = 0; j < num_threads; j++) {
+    //         if (indices[j] < thread_args[j].end) {
+    //             if (min_idx == -1 || compare_keys(&array[indices[j]], &array[indices[min_idx]]) < 0) {
+    //                 min_idx = j;
+    //             }
+    //         }
+    //     }
+    //     sorted_records[i] = array[indices[min_idx]];
+    //     indices[min_idx]++;
+    // }
 
     FILE *fptr;
     fptr = fopen(output_file, "w");
-    if (fptr == NULL)
-    {
-        fprintf(stderr, "An error has occurred 1\n");
+    if (fptr == NULL) {
+        fprintf(stderr, "Error opening output file\n");
         exit(0);
     }
-    for (int i = 0; i < total_records; i++)
-    {
-        fprintf(fptr, "%s%s\n", array[i].key, array[i].record);
+    for (int i = 0; i < total_records; i++) {
+        fprintf(fptr, "%s%s", sorted_records[i].key, sorted_records[i].record);
     }
     fsync(fileno(fptr));
     fclose(fptr);
-
-   for (int i = 0; i < total_records; i++)
-    {
-        printf("%d: %s %s\n", i, array[i].key, array[i].record);
-    }
-    
     return 0;
 }
