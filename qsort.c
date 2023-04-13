@@ -20,9 +20,9 @@ struct record {
 };
 
 typedef struct {
-    struct record *data;
-    int start;
-    int end;
+    struct record *array;
+    int first;
+    int last;
 } ThreadArgs;
 
 int compare_keys(const void *a, const void *b) {
@@ -31,7 +31,7 @@ int compare_keys(const void *a, const void *b) {
 
 void *thread_qsort(void *arg) {
     ThreadArgs *thread_args = (ThreadArgs *)arg;
-    qsort(thread_args->data + thread_args->start, thread_args->end - thread_args->start, sizeof(struct record), compare_keys);
+    qsort(thread_args->array + thread_args->first, thread_args->last - thread_args->first, sizeof(struct record), compare_keys);
     return NULL;
 }
 
@@ -83,14 +83,20 @@ int main(int argc, char **argv) {
 
     fclose(fp);
 
-    pthread_t *threads = malloc(num_threads * sizeof(pthread_t));
-    ThreadArgs *thread_args = malloc(num_threads * sizeof(ThreadArgs));
+    pthread_t threads[num_threads];
+    ThreadArgs thread_args[num_threads];
     int records_per_thread = num_records / num_threads;
 
     for (int i = 0; i < num_threads; i++) {
-        thread_args[i].data = array;
-        thread_args[i].start = i * records_per_thread;
-        thread_args[i].end = (i == num_threads - 1) ? num_records : (i + 1) * records_per_thread;
+        thread_args[i].array = array;
+        thread_args[i].first = i * records_per_thread;
+        if (i == num_threads-1)
+        {
+            thread_args[i].last = num_records;
+        }
+        else{
+            thread_args[i].last = (i+1) * records_per_thread;
+        }
         pthread_create(&threads[i], NULL, thread_qsort, &thread_args[i]);
     }
 
@@ -99,23 +105,37 @@ int main(int argc, char **argv) {
     }
 
     struct record *sorted_records = malloc(num_records * sizeof(struct record));
-    int *indices = malloc(num_threads * sizeof(int));
-    for (int i = 0; i < num_threads; i++) {
-        indices[i] = thread_args[i].start;
-    }
 
-    for (int i = 0; i < num_records; i++) {
-        int min_idx = -1;
+    for (int i = 0, min_idx; i < num_records; i++) {
+        min_idx = -1;
         for (int j = 0; j < num_threads; j++) {
-            if (indices[j] < thread_args[j].end) {
-                if (min_idx == -1 || compare_keys(&array[indices[j]], &array[indices[min_idx]]) < 0) {
+            if (thread_args[j].first < thread_args[j].last) {
+                if (min_idx == -1 || compare_keys(&array[thread_args[j].first], &array[thread_args[min_idx].first]) < 0) {
                     min_idx = j;
                 }
             }
         }
-        sorted_records[i] = array[indices[min_idx]];
-        indices[min_idx]++;
+        sorted_records[i] = array[thread_args[min_idx].first++];
     }
+
+    // struct record *sorted_records = malloc(num_records * sizeof(struct record));
+    // int *indices = malloc(num_threads * sizeof(int));
+    // for (int i = 0; i < num_threads; i++) {
+    //     indices[i] = thread_args[i].start;
+    // }
+
+    // for (int i = 0; i < num_records; i++) {
+    //     int min_idx = -1;
+    //     for (int j = 0; j < num_threads; j++) {
+    //         if (indices[j] < thread_args[j].end) {
+    //             if (min_idx == -1 || compare_keys(&array[indices[j]], &array[indices[min_idx]]) < 0) {
+    //                 min_idx = j;
+    //             }
+    //         }
+    //     }
+    //     sorted_records[i] = array[indices[min_idx]];
+    //     indices[min_idx]++;
+    // }
 
     FILE *fptr;
     fptr = fopen(output_file, "w");
