@@ -19,8 +19,8 @@ int num_processes;
 
 struct record_key
 {
-    char key[KEY_S];
-    char record[RECORD_S];
+    char key[KEY_S+1];
+    char record[RECORD_S+1];
 };
 
 void merge(struct record_key *array, int left, int mid, int right)
@@ -114,7 +114,7 @@ void *thread_helper(void *numThreads)
 
 void *thread2_helper(void *args)
 {
-    int *args2 = (int *)args;
+    int *args2 = (int*)args;
     merge(array, args2[0], args2[1], args2[2]);
     free(args);
     return NULL;
@@ -200,10 +200,11 @@ int main(int argc, char **argv)
         fprintf(stderr, "An error has occurred\n");
     }
 
-    int fd = fileno(fp);
+    //int fd = fileno(fp);
+
     struct stat file_s;
     stat(input_file, &file_s);
-
+    
     // checking size if input file
     int size = (int)file_s.st_size;
     if (size <= 0 || size % 100 != 0)
@@ -219,14 +220,34 @@ int main(int argc, char **argv)
     // fill in our array to be sorted
     array = malloc(total_records * sizeof(struct record_key));
 
+/*
     char *data = mmap(0, size, PROT_READ, MAP_PRIVATE, fd, 0);
     for (int i = 0; i < total_records; i++)
     {
         // putting memory map data (every 100 bytes) into record_key
-        struct record_key *rec = (struct record_key *)(data + (i * 100));
+        struct record_key *rec = (struct record_key*)(data + (i * 100));
         memcpy(&(array[i]), rec, sizeof(struct record_key));
     }
     fclose(fp);
+    */
+
+    for (int i = 0; i < total_records; i++)
+    {
+        if (fread(array[i].key, sizeof(char), KEY_S, fp) != KEY_S)
+        {
+            exit(0);
+        }
+        array[i].key[KEY_S] = '\0';
+        if (fread(array[i].record, sizeof(char), RECORD_S, fp) != RECORD_S)
+        {
+            exit(0);
+        }
+        array[i].record[RECORD_S] = '\0';
+    }
+
+    
+
+
 
     num_processes = get_nprocs();
     // create the thread pool
@@ -243,6 +264,7 @@ int main(int argc, char **argv)
             exit(0);
         }
     }
+    
     for (int i = 0; i < num_processes; i++)
     {
         pthread_join(thread[i], NULL);
@@ -250,24 +272,25 @@ int main(int argc, char **argv)
 
     mergeAll(array, num_processes, 1);
 
-    int fptr;
-    fptr = open(output_file, O_WRONLY, O_APPEND);
-    printf("%d\n", fptr);
-    if (fptr == -1)
+
+    FILE *fptr;
+    fptr = fopen(output_file, "w");
+    if (fptr == NULL)
     {
         fprintf(stderr, "An error has occurred 1\n");
         exit(0);
     }
     for (int i = 0; i < total_records; i++)
     {
-        int rc = write(fptr, &(array[i]), sizeof(struct record_key));
-        if (rc != 100)
-        {
-            fprintf(stderr, "An error has occurred 2\n");
-            exit(0);
-        }
+        fprintf(fptr, "%s%s\n", array[i].key, array[i].record);
     }
-    fsync(fptr);
-    close(fptr);
+    fsync(fileno(fptr));
+    fclose(fptr);
+
+   for (int i = 0; i < total_records; i++)
+    {
+        printf("%d: %s %s\n", i, array[i].key, array[i].record);
+    }
+    
     return 0;
 }
