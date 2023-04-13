@@ -23,7 +23,7 @@ struct record_key {
 };
 
 int compare_keys(const void *a, const void *b) {
-    return strncmp(((struct record_key *)a)->key, ((struct record_key *)b)->key, KEY_S);
+    return (*(int*)a - *(int*)b);
 }
 
 void merge(struct record_key *array, int left, int mid, int right) {
@@ -88,6 +88,66 @@ void *thread_helper(void *numThreads) {
     mergeSort(array, left, right);
     return NULL;
 }
+
+void *thread2_helper(void *args)
+{
+    int *args2 = (int*)args;
+    merge(array, args2[0], args2[1], args2[2]);
+    free(args);
+    return NULL;
+}
+
+
+void mergeAll(struct record_key *array, int numPartitions, int partition)
+{
+    int num_entries = (num_records / num_processes);
+    pthread_t threads[numPartitions / 2];
+    for (int i = 0; i < numPartitions; i += 2)
+    {
+        int left = i * num_entries * partition;
+        int right = ((i + 2) * num_entries * partition) - 1;
+        int mid = left + (num_entries * partition) - 1;
+
+        // base case
+        if (right >= num_records)
+        {
+            right = num_records - 1;
+        }
+        if (numPartitions <= 2)
+        {
+            merge(array, left, mid, right);
+        }
+        else
+        {
+            // thread the merge
+            int *args = (int *)malloc(3 * sizeof(int));
+            args[0] = left;
+            args[1] = mid;
+            args[2] = right;
+            int thread_status = pthread_create(&threads[(int)i / 2], NULL, thread2_helper, (void *)args);
+            if (thread_status != 0)
+            {
+                fprintf(stderr, "error\n");
+                exit(0);
+            }
+        }
+    }
+
+    if (numPartitions > 1)
+    {
+        for (int i = 0; i < numPartitions / 2; i++)
+        {
+            pthread_join(threads[i], NULL);
+        }
+    }
+    // recursively merge again
+    int remainingPartitions = numPartitions / 2;
+    if (remainingPartitions >= 1)
+    {
+        mergeAll(array, remainingPartitions, partition * 2);
+    }
+}
+
 
 
 
@@ -177,6 +237,8 @@ int main(int argc, char **argv)
     {
         pthread_join(thread[i], NULL);
     }
+
+    mergeAll(array, num_processes, 1);
 
 
     FILE *fptr;
