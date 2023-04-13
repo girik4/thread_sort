@@ -220,16 +220,6 @@ int main(int argc, char **argv)
     // fill in our array to be sorted
     array = malloc(total_records * sizeof(struct record_key));
 
-/*
-    char *data = mmap(0, size, PROT_READ, MAP_PRIVATE, fd, 0);
-    for (int i = 0; i < total_records; i++)
-    {
-        // putting memory map data (every 100 bytes) into record_key
-        struct record_key *rec = (struct record_key*)(data + (i * 100));
-        memcpy(&(array[i]), rec, sizeof(struct record_key));
-    }
-    fclose(fp);
-    */
 
     for (int i = 0; i < total_records; i++)
     {
