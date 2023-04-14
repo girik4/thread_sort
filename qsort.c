@@ -7,27 +7,30 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/time.h>
 
 #define KEY_S 4
 #define RECORD_S 96
 #define RECORD 100
 
 int num_records;
-struct record *array;
+struct line *key_record_pair;
 int num_threads;
 
-struct record
+
+typedef struct
+{
+    struct line *Thread_key_record_pair;
+    int first;
+    int last;
+} Threads;
+
+struct line
 {
     char key[KEY_S];
     char record[RECORD_S];
 };
 
-typedef struct
-{
-    struct record *array;
-    int first;
-    int last;
-} ThreadArgs;
 
 int compare_keys(const void *a, const void *b)
 {
@@ -36,8 +39,10 @@ int compare_keys(const void *a, const void *b)
 
 void *thread_qsort(void *arg)
 {
-    ThreadArgs *thread_args = (ThreadArgs *)arg;
-    qsort(thread_args->array + thread_args->first, thread_args->last - thread_args->first, sizeof(struct record), compare_keys);
+    Threads *thread_args = (Threads *)arg;
+    void *base = thread_args->Thread_key_record_pair + thread_args->first;
+    size_t nmemb = thread_args->last - thread_args->first;
+    qsort(base, nmemb, sizeof(struct line), compare_keys);
     return NULL;
 }
 
@@ -53,7 +58,7 @@ int main(int argc, char **argv)
     char *output_file = argv[2];
     num_threads = atoi(argv[3]);
 
-    if (num_threads < 1 || num_threads > get_nprocs())
+    if (num_threads < 1)
     {
         fprintf(stderr, "Invalid number of threads\n");
         exit(0);
@@ -86,26 +91,27 @@ int main(int argc, char **argv)
         exit(0);
     }
 
-    array = malloc(total_records * sizeof(struct record));
+    key_record_pair = malloc(total_records * sizeof(struct line));
 
     for (int i = 0; i < total_records; i++)
     {
-        memcpy(array[i].key, mapped_data + i * RECORD, KEY_S);
-       // array[i].key[KEY_S] = '\0';
-        memcpy(array[i].record, mapped_data + i * RECORD + KEY_S, RECORD_S);
-        // array[i].record[RECORD_S] = '\0';
+        memcpy(key_record_pair[i].key, mapped_data + i * RECORD, KEY_S);
+        memcpy(key_record_pair[i].record, mapped_data + i * RECORD + KEY_S, RECORD_S);
     }
 
     munmap(mapped_data, size);
     close(fd);
 
+    struct timeval start_time, end_time;
+    gettimeofday(&start_time, NULL);
+
     pthread_t threads[num_threads];
-    ThreadArgs thread_args[num_threads];
+    Threads thread_args[num_threads];
     int records_per_thread = num_records / num_threads;
 
     for (int i = 0; i < num_threads; i++)
     {
-        thread_args[i].array = array;
+        thread_args[i].Thread_key_record_pair = key_record_pair;
         thread_args[i].first = i * records_per_thread;
         if (i == num_threads - 1)
         {
@@ -123,42 +129,28 @@ int main(int argc, char **argv)
         pthread_join(threads[i], NULL);
     }
 
-    struct record *sorted_records = malloc(num_records * sizeof(struct record));
+    struct line *final = malloc(num_records * sizeof(struct line));
 
-    for (int i = 0, min_idx; i < num_records; i++)
+    int min_idx;
+    for (int i = 0; i < num_records; i++)
     {
         min_idx = -1;
         for (int j = 0; j < num_threads; j++)
         {
             if (thread_args[j].first < thread_args[j].last)
             {
-                if (min_idx == -1 || compare_keys(&array[thread_args[j].first], &array[thread_args[min_idx].first]) < 0)
+                if (min_idx == -1 || compare_keys(&key_record_pair[thread_args[j].first], &key_record_pair[thread_args[min_idx].first]) < 0)
                 {
                     min_idx = j;
                 }
             }
         }
-        sorted_records[i] = array[thread_args[min_idx].first++];
+        final[i] = key_record_pair[thread_args[min_idx].first++];
     }
 
-    // struct record *sorted_records = malloc(num_records * sizeof(struct record));
-    // int *indices = malloc(num_threads * sizeof(int));
-    // for (int i = 0; i < num_threads; i++) {
-    //     indices[i] = thread_args[i].start;
-    // }
-
-    // for (int i = 0; i < num_records; i++) {
-    //     int min_idx = -1;
-    //     for (int j = 0; j < num_threads; j++) {
-    //         if (indices[j] < thread_args[j].end) {
-    //             if (min_idx == -1 || compare_keys(&array[indices[j]], &array[indices[min_idx]]) < 0) {
-    //                 min_idx = j;
-    //             }
-    //         }
-    //     }
-    //     sorted_records[i] = array[indices[min_idx]];
-    //     indices[min_idx]++;
-    // }
+    gettimeofday(&end_time, NULL);
+    long elapsed_time = (end_time.tv_sec - start_time.tv_sec) * 1e6 + (end_time.tv_usec - start_time.tv_usec);
+    printf("Time taken for sorting (%d threads): %ld miliseconds\n", num_threads, elapsed_time / 100);
 
     int out_fd = open(output_file, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     if (out_fd == -1)
@@ -183,11 +175,12 @@ int main(int argc, char **argv)
 
     for (int i = 0; i < total_records; i++)
     {
-        memcpy(out_mapped_data + i * RECORD, sorted_records[i].key, KEY_S);
-        memcpy(out_mapped_data + i * RECORD + KEY_S, sorted_records[i].record, RECORD_S);
+        memcpy(out_mapped_data + i * RECORD, final[i].key, KEY_S);
+        memcpy(out_mapped_data + i * RECORD + KEY_S, final[i].record, RECORD_S);
     }
 
     // Ensure the data is written to the file
+    fsync(fd);
     msync(out_mapped_data, size, MS_SYNC);
 
     munmap(out_mapped_data, size);
